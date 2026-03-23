@@ -1,0 +1,30 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "编译打砖块游戏",
+            "type": "shell",
+            "command": "g++",
+            "args": [
+                "main.cpp",
+                "Ball.cpp",
+                "Paddle.cpp",
+                "Brick.cpp",
+                "-o",
+                "BrickBreaker.exe",
+                "-ID:/raylib/w64devkit/x86_64-w64-mingw32/include",
+                "-LD:/raylib/w64devkit/x86_64-w64-mingw32/lib",
+                "-lraylib",
+                "-lopengl32",
+                "-lgdi32",
+                "-lwinmm"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": ["$gcc"],
+            "detail": "编译打砖块游戏"
+        }
+    ]
+}

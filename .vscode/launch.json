@@ -1,0 +1,17 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "运行打砖块游戏",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/BrickBreaker.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "preLaunchTask": "编译打砖块游戏"
+        }
+    ]
+}

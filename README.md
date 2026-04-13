@@ -25,7 +25,7 @@ g++ src/main.cpp -o BrickBreaker -lraylib -lopengl32 -lgdi32 -lwinmm
 直接生成的可执行文件 BrickBreaker.exe 即可运行游戏。
 📁 项目结构
 plaintext
-BrickBreaker/
+BrickBreaker/git add README.md
 ├── src/
 │   ├── main.cpp          # 主程序入口
 │   ├── Ball.cpp/h        # 小球类

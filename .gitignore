@@ -1,0 +1,17 @@
+# 编译产物
+*.exe
+*.o
+*.obj
+*.dll
+*.out
+
+# Raylib/VS 缓存
+.vscode/
+.vs/
+build/
+bin/
+obj/
+
+# 日志/临时文件
+*.log
+.DS_Store

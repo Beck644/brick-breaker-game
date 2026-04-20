@@ -1,122 +1,202 @@
-// 根治 Windows 头文件冲突
 #define WIN32_LEAN_AND_MEAN
-#undef Rectangle
+#define NOGDI
+#define NOUSER
+#define NOMINMAX
 
 #include "raylib.h"
+#undef Rectangle
+#undef CloseWindow
+#undef ShowCursor
 
-// 全局同步数据（主机 → 客户端 实时传递）
-struct GameState
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <cstring>
+#pragma comment(lib, "ws2_32.lib")
+
+#define WIDTH  800
+#define HEIGHT 600
+#define BRICK_ROWS 4   // 改为4排，删除最上面一排
+#define BRICK_COLS 10
+#define PORT 7777
+
+// 网络同步结构体
+typedef struct
 {
-    float ballX;
-    float ballY;
+    float ballX, ballY;
     float hostPadX;
     float clientPadX;
-};
+    bool bricks[BRICK_ROWS][BRICK_COLS];
+} SyncState;
 
-GameState globalState = {};
+SOCKET udpSock = INVALID_SOCKET;
+sockaddr_in peerAddr = { 0 };
+bool isHost = false;
+bool isConnected = false;
+SyncState gameGlobal = { 0 };
+
+// UDP初始化
+void NetInit(bool hostMode)
+{
+    WSADATA wsa;
+    WSAStartup(MAKEWORD(2, 2), &wsa);
+    udpSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    u_long nonBlock = 1;
+    ioctlsocket(udpSock, FIONBIO, &nonBlock);
+
+    memset(&peerAddr, 0, sizeof(peerAddr));
+    peerAddr.sin_family = AF_INET;
+    peerAddr.sin_port = htons(PORT);
+
+    if (hostMode)
+    {
+        sockaddr_in bindAddr = {0};
+        bindAddr.sin_family = AF_INET;
+        bindAddr.sin_port = htons(PORT);
+        bindAddr.sin_addr.s_addr = INADDR_ANY;
+        bind(udpSock, (sockaddr*)&bindAddr, sizeof(bindAddr));
+        isHost = true;
+    }
+    else
+    {
+        peerAddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        isHost = false;
+    }
+    isConnected = true;
+}
+
+void NetSend(SyncState data)
+{
+    sendto(udpSock, (const char*)&data, sizeof(SyncState), 0, (sockaddr*)&peerAddr, sizeof(peerAddr));
+}
+
+void NetRecv()
+{
+    SyncState temp;
+    sockaddr_in fromAddr;
+    int addrLen = sizeof(fromAddr);
+    int ret = recvfrom(udpSock, (char*)&temp, sizeof(SyncState), 0, (sockaddr*)&fromAddr, &addrLen);
+    if (ret > 0) { gameGlobal = temp; peerAddr = fromAddr; }
+}
 
 int main()
 {
-    const int w = 800;
-    const int h = 600;
-    InitWindow(w, h, "Brick Breaker - Fixed Client Ball");
+    SetTraceLogLevel(LOG_NONE);
+    InitWindow(WIDTH, HEIGHT, "BrickBreaker Final");
     SetTargetFPS(60);
 
-    // 挡板
-    Rectangle hostPad   = { w/2 - 50, h - 50, 100, 16 };
-    Rectangle clientPad = { w/2 - 50, 30,        100, 16 };
-
-    // 小球（只有主机真正修改它）
-    Vector2 ball     = { w/2.0f, h/2.0f };
+    // 游戏物体
+    Rectangle hostPad  = { WIDTH/2 - 50, HEIGHT - 40, 100, 16 };
+    Rectangle clientPad= { WIDTH/2 - 50, 40,       100, 16 };
+    Vector2 ball = { WIDTH/2, HEIGHT/2 };
     Vector2 ballSpeed = { 4.0f, -4.0f };
 
-    bool isHost = false;
-    bool connected = false;
+    Rectangle bricks[BRICK_ROWS][BRICK_COLS];
+    bool brickLocal[BRICK_ROWS][BRICK_COLS];
+
+    // 砖块居中布局（4排，无最上排）
+    for (int i = 0; i < BRICK_ROWS; i++)
+        for (int j = 0; j < BRICK_COLS; j++)
+        {
+            bricks[i][j] = { (float)(j*75 + 10), (float)(i*25 + 170), 70.0f, 20.0f };
+            brickLocal[i][j] = true;
+        }
 
     while (!WindowShouldClose())
     {
-        // ======================================
-        // 按 1 = 主机（运行物理）
-        // 按 2 = 客户端（只同步，不运行物理）
-        // ======================================
-        if (IsKeyPressed(KEY_ONE))  { isHost = true;  connected = true; }
-        if (IsKeyPressed(KEY_TWO))  { isHost = false; connected = true; }
-
-        // ======================================
-        // 【主机】：小球运动、反弹、物理全在这里
-        // ======================================
-        if (isHost && connected)
+        if (!isConnected)
         {
-            // 主机控制
-            if (IsKeyDown(KEY_A)) hostPad.x -= 5;
-            if (IsKeyDown(KEY_D)) hostPad.x += 5;
+            if (IsKeyPressed(KEY_ONE))  NetInit(true);
+            if (IsKeyPressed(KEY_TWO)) NetInit(false);
+        }
 
-            // 客户端的挡板位置从同步数据拿
-            clientPad.x = globalState.clientPadX;
+        if (isConnected) NetRecv();
 
-            // 小球运动
+        // 主机逻辑
+        if (isHost && isConnected)
+        {
+            if (IsKeyDown(KEY_A)) hostPad.x -= 5.0f;
+            if (IsKeyDown(KEY_D)) hostPad.x += 5.0f;
+
+            clientPad.x = gameGlobal.clientPadX;
             ball.x += ballSpeed.x;
             ball.y += ballSpeed.y;
 
-            // 边界反弹
-            if (ball.x <= 8 || ball.x >= w-8)  ballSpeed.x *= -1;
-            if (ball.y <= 8 || ball.y >= h-8)  ballSpeed.y *= -1;
+            // 左右边界反弹
+            if (ball.x < 8 || ball.x > WIDTH - 8) ballSpeed.x *= -1;
 
-            // 碰撞反弹
-            if (CheckCollisionCircleRec(ball, 8, hostPad))   ballSpeed.y *= -1;
+            // 顶部&底部 都死亡重置（不反弹）
+            if (ball.y < 8 || ball.y > HEIGHT)
+            {
+                ball = { WIDTH/2, HEIGHT/2 };
+                ballSpeed = { 4.0f, -4.0f };
+                for(int i=0;i<BRICK_ROWS;i++)for(int j=0;j<BRICK_COLS;j++) brickLocal[i][j]=true;
+            }
+
+            // 挡板碰撞
+            if (CheckCollisionCircleRec(ball, 8, hostPad)) ballSpeed.y *= -1;
             if (CheckCollisionCircleRec(ball, 8, clientPad)) ballSpeed.y *= -1;
 
-            // 同步给客户端
-            globalState.ballX      = ball.x;
-            globalState.ballY      = ball.y;
-            globalState.hostPadX   = hostPad.x;
-            globalState.clientPadX = clientPad.x;
+            // 砖块碰撞
+            for (int i = 0; i < BRICK_ROWS; i++)
+                for (int j = 0; j < BRICK_COLS; j++)
+                    if (brickLocal[i][j] && CheckCollisionCircleRec(ball, 8, bricks[i][j]))
+                    {
+                        brickLocal[i][j] = false;
+                        ballSpeed.y *= -1;
+                    }
+
+            // 同步发包
+            gameGlobal.ballX = ball.x;
+            gameGlobal.ballY = ball.y;
+            gameGlobal.hostPadX = hostPad.x;
+            gameGlobal.clientPadX = clientPad.x;
+            memcpy(gameGlobal.bricks, brickLocal, sizeof(brickLocal));
+            NetSend(gameGlobal);
         }
 
-        // ======================================
-        // 【客户端】：只拿数据，小球强制同步运动（修复完成！）
-        // ======================================
-        if (!isHost && connected)
+        // 客户端逻辑
+        if (!isHost && isConnected)
         {
-            // 客户端控制自己的挡板
-            if (IsKeyDown(KEY_LEFT))  clientPad.x -= 5;
-            if (IsKeyDown(KEY_RIGHT)) clientPad.x += 5;
+            static bool firstSend = true;
+            if (firstSend) { gameGlobal.clientPadX = clientPad.x; NetSend(gameGlobal); firstSend = false; }
 
-            // 把自己的挡板发给主机
-            globalState.clientPadX = clientPad.x;
+            if (IsKeyDown(KEY_LEFT))  clientPad.x -= 5.0f;
+            if (IsKeyDown(KEY_RIGHT)) clientPad.x += 5.0f;
 
-            // ======================================
-            // ✅ 关键修复：客户端强制把小球位置设为主机的！
-            // 现在小球会 100% 同步运动，不会卡住！
-            // ======================================
-            ball.x = globalState.ballX;
-            ball.y = globalState.ballY;
+            // 强制同步主机数据
+            ball.x = gameGlobal.ballX;
+            ball.y = gameGlobal.ballY;
+            hostPad.x = gameGlobal.hostPadX;
+            memcpy(brickLocal, gameGlobal.bricks, sizeof(brickLocal));
 
-            hostPad.x   = globalState.hostPadX;
-            clientPad.x = globalState.clientPadX;
+            gameGlobal.clientPadX = clientPad.x;
+            NetSend(gameGlobal);
         }
 
-        // ====================== 绘制 ======================
+        // 渲染
         BeginDrawing();
         ClearBackground(BLACK);
 
+        for (int i = 0; i < BRICK_ROWS; i++)
+            for (int j = 0; j < BRICK_COLS; j++)
+                if (brickLocal[i][j]) DrawRectangleRec(bricks[i][j], RED);
+
         DrawRectangleRec(hostPad, BLUE);
         DrawRectangleRec(clientPad, ORANGE);
-        DrawCircleV(ball, 8, RED);
+        DrawCircleV(ball, 8, WHITE);
 
-        if (!connected)
+        // 无乱码英文提示
+        if (!isConnected)
         {
-            DrawText("Press 1 = HOST", 240, 200, 40, WHITE);
-            DrawText("Press 2 = CLIENT", 240, 300, 40, WHITE);
-        }
-        else
-        {
-            DrawText(isHost ? "HOST: A/D" : "CLIENT: Arrow Keys", 10, 10, 20, WHITE);
+            DrawText("KEY 1 = Host (A/D - Bottom Pad)", 200, 220, 26, WHITE);
+            DrawText("KEY 2 = Client (Left/Right - Top Pad)", 190, 270, 26, WHITE);
         }
 
         EndDrawing();
     }
 
+    closesocket(udpSock);
+    WSACleanup();
     CloseWindow();
     return 0;
 }

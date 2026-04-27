@@ -1,3 +1,4 @@
+// 屏蔽Windows与Raylib命名冲突
 #define WIN32_LEAN_AND_MEAN
 #define NOGDI
 #define NOUSER
@@ -8,83 +9,61 @@
 #undef CloseWindow
 #undef ShowCursor
 
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <cstring>
-#pragma comment(lib, "ws2_32.lib")
+// ================== PPT要求：多线程核心头文件 ==================
+#include <thread>
+#include <mutex>
+#include <future>
+#include <chrono>
 
+// 游戏基础常量
 #define WIDTH  800
 #define HEIGHT 600
-#define BRICK_ROWS 4   // 改为4排，删除最上面一排
+#define BRICK_ROWS 4
 #define BRICK_COLS 10
-#define PORT 7777
 
-// 网络同步结构体
-typedef struct
+// ================== PPT要求：加载状态枚举 ==================
+enum class LoadState { IDLE, LOADING, DONE };
+
+// ================== 线程安全的共享数据（互斥锁保护） ==================
+std::mutex g_dataMutex;
+LoadState g_loadState = LoadState::IDLE;
+Color g_brickColor = RED; // 砖块初始颜色，加载完成后变更
+std::future<int> g_loadFuture; // 异步任务句柄，避免主线程阻塞
+
+// ================== PPT要求：异步加载函数（工作线程执行） ==================
+int AsyncLoadLargeResource()
 {
-    float ballX, ballY;
-    float hostPadX;
-    float clientPadX;
-    bool bricks[BRICK_ROWS][BRICK_COLS];
-} SyncState;
+    // 模拟加载大型纹理/资源的耗时操作（2秒，可自行调整）
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 
-SOCKET udpSock = INVALID_SOCKET;
-sockaddr_in peerAddr = { 0 };
-bool isHost = false;
-bool isConnected = false;
-SyncState gameGlobal = { 0 };
+    // 加锁修改共享数据，避免数据竞争
+    std::lock_guard<std::mutex> guard(g_dataMutex);
+    g_loadState = LoadState::DONE;
+    g_brickColor = GREEN; // 加载完成，砖块变为绿色
 
-// UDP初始化
-void NetInit(bool hostMode)
-{
-    WSADATA wsa;
-    WSAStartup(MAKEWORD(2, 2), &wsa);
-    udpSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    u_long nonBlock = 1;
-    ioctlsocket(udpSock, FIONBIO, &nonBlock);
-
-    memset(&peerAddr, 0, sizeof(peerAddr));
-    peerAddr.sin_family = AF_INET;
-    peerAddr.sin_port = htons(PORT);
-
-    if (hostMode)
-    {
-        sockaddr_in bindAddr = {0};
-        bindAddr.sin_family = AF_INET;
-        bindAddr.sin_port = htons(PORT);
-        bindAddr.sin_addr.s_addr = INADDR_ANY;
-        bind(udpSock, (sockaddr*)&bindAddr, sizeof(bindAddr));
-        isHost = true;
-    }
-    else
-    {
-        peerAddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        isHost = false;
-    }
-    isConnected = true;
+    return 0; // 模拟返回资源ID，可扩展为真实纹理加载
 }
 
-void NetSend(SyncState data)
+// ================== 线程安全的读操作封装 ==================
+LoadState GetLoadState()
 {
-    sendto(udpSock, (const char*)&data, sizeof(SyncState), 0, (sockaddr*)&peerAddr, sizeof(peerAddr));
+    std::lock_guard<std::mutex> guard(g_dataMutex);
+    return g_loadState;
 }
 
-void NetRecv()
+Color GetBrickColor()
 {
-    SyncState temp;
-    sockaddr_in fromAddr;
-    int addrLen = sizeof(fromAddr);
-    int ret = recvfrom(udpSock, (char*)&temp, sizeof(SyncState), 0, (sockaddr*)&fromAddr, &addrLen);
-    if (ret > 0) { gameGlobal = temp; peerAddr = fromAddr; }
+    std::lock_guard<std::mutex> guard(g_dataMutex);
+    return g_brickColor;
 }
 
 int main()
 {
     SetTraceLogLevel(LOG_NONE);
-    InitWindow(WIDTH, HEIGHT, "BrickBreaker Final");
+    InitWindow(WIDTH, HEIGHT, "BrickBreaker 多线程异步加载作业");
     SetTargetFPS(60);
 
-    // 游戏物体
+    // 游戏核心物体
     Rectangle hostPad  = { WIDTH/2 - 50, HEIGHT - 40, 100, 16 };
     Rectangle clientPad= { WIDTH/2 - 50, 40,       100, 16 };
     Vector2 ball = { WIDTH/2, HEIGHT/2 };
@@ -93,7 +72,7 @@ int main()
     Rectangle bricks[BRICK_ROWS][BRICK_COLS];
     bool brickLocal[BRICK_ROWS][BRICK_COLS];
 
-    // 砖块居中布局（4排，无最上排）
+    // 砖块初始化
     for (int i = 0; i < BRICK_ROWS; i++)
         for (int j = 0; j < BRICK_COLS; j++)
         {
@@ -103,33 +82,37 @@ int main()
 
     while (!WindowShouldClose())
     {
-        if (!isConnected)
+        // ================== PPT要求：按L键触发异步加载 ==================
+        if (IsKeyPressed(KEY_L) && GetLoadState() == LoadState::IDLE)
         {
-            if (IsKeyPressed(KEY_ONE))  NetInit(true);
-            if (IsKeyPressed(KEY_TWO)) NetInit(false);
+            // 加锁修改加载状态
+            {
+                std::lock_guard<std::mutex> guard(g_dataMutex);
+                g_loadState = LoadState::LOADING;
+            }
+            // 启动异步任务：强制新线程执行，符合PPT要求
+            g_loadFuture = std::async(std::launch::async, AsyncLoadLargeResource);
         }
 
-        if (isConnected) NetRecv();
+        // ================== 游戏核心逻辑（主线程不卡顿） ==================
+        // 挡板控制
+        if (IsKeyDown(KEY_A)) hostPad.x -= 5.0f;
+        if (IsKeyDown(KEY_D)) hostPad.x += 5.0f;
+        if (IsKeyDown(KEY_LEFT))  clientPad.x -= 5.0f;
+        if (IsKeyDown(KEY_RIGHT)) clientPad.x += 5.0f;
 
-        // 主机逻辑
-        if (isHost && isConnected)
+        // 小球物理（仅在非加载状态运行，也可保留全程运行）
+        if (GetLoadState() != LoadState::LOADING)
         {
-            if (IsKeyDown(KEY_A)) hostPad.x -= 5.0f;
-            if (IsKeyDown(KEY_D)) hostPad.x += 5.0f;
-
-            clientPad.x = gameGlobal.clientPadX;
             ball.x += ballSpeed.x;
             ball.y += ballSpeed.y;
 
-            // 左右边界反弹
+            // 边界处理
             if (ball.x < 8 || ball.x > WIDTH - 8) ballSpeed.x *= -1;
-
-            // 顶部&底部 都死亡重置（不反弹）
             if (ball.y < 8 || ball.y > HEIGHT)
             {
                 ball = { WIDTH/2, HEIGHT/2 };
                 ballSpeed = { 4.0f, -4.0f };
-                for(int i=0;i<BRICK_ROWS;i++)for(int j=0;j<BRICK_COLS;j++) brickLocal[i][j]=true;
             }
 
             // 挡板碰撞
@@ -144,59 +127,43 @@ int main()
                         brickLocal[i][j] = false;
                         ballSpeed.y *= -1;
                     }
-
-            // 同步发包
-            gameGlobal.ballX = ball.x;
-            gameGlobal.ballY = ball.y;
-            gameGlobal.hostPadX = hostPad.x;
-            gameGlobal.clientPadX = clientPad.x;
-            memcpy(gameGlobal.bricks, brickLocal, sizeof(brickLocal));
-            NetSend(gameGlobal);
         }
 
-        // 客户端逻辑
-        if (!isHost && isConnected)
-        {
-            static bool firstSend = true;
-            if (firstSend) { gameGlobal.clientPadX = clientPad.x; NetSend(gameGlobal); firstSend = false; }
-
-            if (IsKeyDown(KEY_LEFT))  clientPad.x -= 5.0f;
-            if (IsKeyDown(KEY_RIGHT)) clientPad.x += 5.0f;
-
-            // 强制同步主机数据
-            ball.x = gameGlobal.ballX;
-            ball.y = gameGlobal.ballY;
-            hostPad.x = gameGlobal.hostPadX;
-            memcpy(brickLocal, gameGlobal.bricks, sizeof(brickLocal));
-
-            gameGlobal.clientPadX = clientPad.x;
-            NetSend(gameGlobal);
-        }
-
-        // 渲染
+        // ================== 渲染（全程在主线程，符合Raylib限制） ==================
         BeginDrawing();
         ClearBackground(BLACK);
 
+        // 绘制砖块（使用线程安全的颜色）
+        Color currentBrickColor = GetBrickColor();
         for (int i = 0; i < BRICK_ROWS; i++)
             for (int j = 0; j < BRICK_COLS; j++)
-                if (brickLocal[i][j]) DrawRectangleRec(bricks[i][j], RED);
+                if (brickLocal[i][j])
+                    DrawRectangleRec(bricks[i][j], currentBrickColor);
 
+        // 绘制挡板和小球
         DrawRectangleRec(hostPad, BLUE);
         DrawRectangleRec(clientPad, ORANGE);
         DrawCircleV(ball, 8, WHITE);
 
-        // 无乱码英文提示
-        if (!isConnected)
+        // ================== PPT要求：加载期间显示Loading... ==================
+        if (GetLoadState() == LoadState::LOADING)
         {
-            DrawText("KEY 1 = Host (A/D - Bottom Pad)", 200, 220, 26, WHITE);
-            DrawText("KEY 2 = Client (Left/Right - Top Pad)", 190, 270, 26, WHITE);
+            DrawText("Loading...", WIDTH/2 - 120, HEIGHT/2 - 20, 40, WHITE);
+        }
+        // 加载完成提示
+        else if (GetLoadState() == LoadState::DONE)
+        {
+            DrawText("Load Complete!", WIDTH/2 - 150, HEIGHT/2 - 20, 40, GREEN);
+        }
+        // 初始提示
+        else
+        {
+            DrawText("Press L to Start Async Load", WIDTH/2 - 220, 30, 24, GRAY);
         }
 
         EndDrawing();
     }
 
-    closesocket(udpSock);
-    WSACleanup();
     CloseWindow();
     return 0;
 }

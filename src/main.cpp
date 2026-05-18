@@ -8,7 +8,6 @@
 #undef CloseWindow
 #undef ShowCursor
 
-// 引入官方JSON库（正确路径）
 #include "../include/json.hpp"
 using json = nlohmann::json;
 
@@ -52,14 +51,14 @@ json LoadJSONWithFallback(const std::string& path, const json& fallback) {
     try {
         std::ifstream file(path);
         if (!file.is_open()) {
-            TraceLog(LOG_WARNING, "文件不存在: %s，使用默认配置", path.c_str());
+            TraceLog(LOG_WARNING, "File not found: %s, using default config", path.c_str());
             return fallback;
         }
         json config;
         file >> config;
         return config;
     } catch (const std::exception& e) {
-        TraceLog(LOG_ERROR, "JSON解析失败: %s，使用默认配置", e.what());
+        TraceLog(LOG_ERROR, "JSON parse failed: %s, using default config", e.what());
         return fallback;
     }
 }
@@ -88,7 +87,7 @@ void LoadLevel(int level) {
     std::string filename = "levels/level" + std::to_string(level) + ".json";
     json config = LoadJSONWithFallback(filename, defaultConfig);
 
-    // 【关键】显式类型转换，彻底解决编译歧义
+    // 显式类型转换，彻底解决编译歧义
     g_brickRows = config["rows"].get<int>();
     g_brickCols = config["cols"].get<int>();
     float brickWidth = config["brick_width"].get<float>();
@@ -116,6 +115,8 @@ void LoadLevel(int level) {
             }
         }
     }
+
+    TraceLog(LOG_INFO, "Level %d loaded successfully", level);
 }
 
 // ====================== PPT要求：保存游戏 ======================
@@ -128,7 +129,7 @@ void SaveGame() {
 
     std::ofstream file("save.json");
     file << save.dump(4); // 格式化输出，缩进4空格
-    TraceLog(LOG_INFO, "游戏已保存到 save.json");
+    TraceLog(LOG_INFO, "Game saved to save.json");
 }
 
 // ====================== PPT要求：加载游戏 ======================
@@ -141,20 +142,20 @@ bool LoadGame() {
         json save;
         file >> save;
 
-        // 【关键】显式类型转换
+        // 显式类型转换
         if (save["version"].get<int>() == 1) {
             g_currentLevel = save["current_level"].get<int>();
             g_score = save["score"].get<int>();
             g_lives = save["lives"].get<int>();
             LoadLevel(g_currentLevel);
-            TraceLog(LOG_INFO, "存档加载成功");
+            TraceLog(LOG_INFO, "Save loaded successfully");
             return true;
         } else {
-            TraceLog(LOG_WARNING, "存档版本不兼容");
+            TraceLog(LOG_WARNING, "Save version incompatible");
             return false;
         }
     } catch (...) {
-        TraceLog(LOG_ERROR, "存档加载失败");
+        TraceLog(LOG_ERROR, "Save load failed");
         return false;
     }
 }
@@ -192,7 +193,7 @@ bool AllBricksDestroyed() {
 
 int main() {
     SetTraceLogLevel(LOG_NONE);
-    InitWindow(WIDTH, HEIGHT, "BrickBreaker - 数据持久化版");
+    InitWindow(WIDTH, HEIGHT, "BrickBreaker - Data Persistence");
     SetTargetFPS(60);
 
     // 游戏对象
@@ -209,9 +210,9 @@ int main() {
         while (!WindowShouldClose()) {
             BeginDrawing();
             ClearBackground(BLACK);
-            DrawText("发现存档！", WIDTH/2-80, HEIGHT/2-60, 32, WHITE);
-            DrawText("按 C 继续游戏", WIDTH/2-120, HEIGHT/2, 24, WHITE);
-            DrawText("按 N 开始新游戏", WIDTH/2-130, HEIGHT/2+40, 24, WHITE);
+            DrawText("Save Found!", WIDTH/2-90, HEIGHT/2-60, 32, WHITE);
+            DrawText("Press C to Continue", WIDTH/2-140, HEIGHT/2, 24, WHITE);
+            DrawText("Press N for New Game", WIDTH/2-150, HEIGHT/2+40, 24, WHITE);
             EndDrawing();
 
             if (IsKeyPressed(KEY_C)) {
@@ -327,11 +328,11 @@ int main() {
         DrawRectangleRec(clientPad, ORANGE);
         DrawCircleV(ball, 8, WHITE);
 
-        // UI
-        DrawText(TextFormat("分数: %d", g_score), 10, 10, 20, WHITE);
-        DrawText(TextFormat("生命: %d", g_lives), 10, 40, 20, WHITE);
-        DrawText(TextFormat("关卡: %d/%d", g_currentLevel, MAX_LEVELS), 10, 70, 20, WHITE);
-        DrawText("按 S 保存 | 按 L 加载资源", WIDTH-280, 10, 18, GRAY);
+        // UI（全英文，无乱码）
+        DrawText(TextFormat("Score: %d", g_score), 10, 10, 20, WHITE);
+        DrawText(TextFormat("Lives: %d", g_lives), 10, 40, 20, WHITE);
+        DrawText(TextFormat("Level: %d/%d", g_currentLevel, MAX_LEVELS), 10, 70, 20, WHITE);
+        DrawText("S: Save | L: Load", WIDTH-200, 10, 18, GRAY);
 
         // 加载提示
         if (GetLoadState() == LoadState::LOADING)
@@ -342,9 +343,9 @@ int main() {
             if (g_lives <= 0) {
                 DrawText("GAME OVER", WIDTH/2-120, HEIGHT/2-40, 40, RED);
             } else {
-                DrawText("恭喜通关！", WIDTH/2-120, HEIGHT/2-40, 40, GREEN);
+                DrawText("YOU WIN!", WIDTH/2-100, HEIGHT/2-40, 40, GREEN);
             }
-            DrawText("按 R 重新开始", WIDTH/2-110, HEIGHT/2+20, 24, WHITE);
+            DrawText("Press R to Restart", WIDTH/2-130, HEIGHT/2+20, 24, WHITE);
         }
 
         EndDrawing();

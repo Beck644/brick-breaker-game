@@ -63,12 +63,12 @@ json LoadJSONWithFallback(const std::string& path, const json& fallback) {
     }
 }
 
-// ====================== PPT要求：从JSON加载关卡 ======================
-void LoadLevel(int level) {
+// ====================== 从JSON加载完整关卡（用于新游戏）======================
+void LoadFullLevel(int level) {
     g_currentLevel = level;
     g_gameOver = false;
 
-    // 默认关卡配置（JSON加载失败时使用）
+    // 默认关卡配置
     json defaultConfig = {
         {"rows", 4},
         {"cols", 10},
@@ -87,7 +87,7 @@ void LoadLevel(int level) {
     std::string filename = "levels/level" + std::to_string(level) + ".json";
     json config = LoadJSONWithFallback(filename, defaultConfig);
 
-    // 显式类型转换，彻底解决编译歧义
+    // 解析配置
     g_brickRows = config["rows"].get<int>();
     g_brickCols = config["cols"].get<int>();
     float brickWidth = config["brick_width"].get<float>();
@@ -116,10 +116,54 @@ void LoadLevel(int level) {
         }
     }
 
-    TraceLog(LOG_INFO, "Level %d loaded successfully", level);
+    TraceLog(LOG_INFO, "Full level %d loaded", level);
 }
 
-// ====================== PPT要求：保存游戏 ======================
+// ====================== 从存档加载关卡（保留砖块状态）======================
+void LoadLevelFromSave(int level, const json& brickStates) {
+    g_currentLevel = level;
+    g_gameOver = false;
+
+    // 先加载完整关卡的基本信息（位置、尺寸）
+    json defaultConfig = {
+        {"rows", 4},
+        {"cols", 10},
+        {"brick_width", 70},
+        {"brick_height", 20},
+        {"start_x", 10},
+        {"start_y", 170}
+    };
+
+    std::string filename = "levels/level" + std::to_string(level) + ".json";
+    json config = LoadJSONWithFallback(filename, defaultConfig);
+
+    g_brickRows = config["rows"].get<int>();
+    g_brickCols = config["cols"].get<int>();
+    float brickWidth = config["brick_width"].get<float>();
+    float brickHeight = config["brick_height"].get<float>();
+    float startX = config["start_x"].get<float>();
+    float startY = config["start_y"].get<float>();
+
+    // 清空旧砖块
+    memset(g_bricks, 0, sizeof(g_bricks));
+
+    // 从存档恢复砖块状态
+    for (int i = 0; i < g_brickRows; i++) {
+        for (int j = 0; j < g_brickCols; j++) {
+            g_bricks[i][j].rect = {
+                startX + j * brickWidth,
+                startY + i * brickHeight,
+                brickWidth,
+                brickHeight
+            };
+            g_bricks[i][j].active = brickStates[i][j].get<bool>();
+        }
+    }
+
+    TraceLog(LOG_INFO, "Level %d loaded from save with brick states", level);
+}
+
+// ====================== PPT要求：保存游戏（完整保存砖块状态）======================
 void SaveGame() {
     json save;
     save["version"] = 1;
@@ -127,12 +171,23 @@ void SaveGame() {
     save["score"] = g_score;
     save["lives"] = g_lives;
 
+    // 【新增】保存所有砖块的状态
+    json brickStates = json::array();
+    for (int i = 0; i < g_brickRows; i++) {
+        json row = json::array();
+        for (int j = 0; j < g_brickCols; j++) {
+            row.push_back(g_bricks[i][j].active);
+        }
+        brickStates.push_back(row);
+    }
+    save["brick_states"] = brickStates;
+
     std::ofstream file("save.json");
     file << save.dump(4); // 格式化输出，缩进4空格
-    TraceLog(LOG_INFO, "Game saved to save.json");
+    TraceLog(LOG_INFO, "Game saved to save.json with brick states");
 }
 
-// ====================== PPT要求：加载游戏 ======================
+// ====================== PPT要求：加载游戏（恢复砖块状态）======================
 bool LoadGame() {
     try {
         std::ifstream file("save.json");
@@ -142,13 +197,20 @@ bool LoadGame() {
         json save;
         file >> save;
 
-        // 显式类型转换
         if (save["version"].get<int>() == 1) {
             g_currentLevel = save["current_level"].get<int>();
             g_score = save["score"].get<int>();
             g_lives = save["lives"].get<int>();
-            LoadLevel(g_currentLevel);
-            TraceLog(LOG_INFO, "Save loaded successfully");
+            
+            // 【新增】从存档恢复砖块状态
+            if (save.contains("brick_states")) {
+                LoadLevelFromSave(g_currentLevel, save["brick_states"]);
+            } else {
+                // 兼容旧版存档（没有砖块状态）
+                LoadFullLevel(g_currentLevel);
+            }
+            
+            TraceLog(LOG_INFO, "Save loaded successfully with brick states");
             return true;
         } else {
             TraceLog(LOG_WARNING, "Save version incompatible");
@@ -229,7 +291,7 @@ int main() {
     if (continueGame) {
         LoadGame();
     } else {
-        LoadLevel(1);
+        LoadFullLevel(1);
         g_score = 0;
         g_lives = 3;
     }
@@ -291,7 +353,7 @@ int main() {
             if (AllBricksDestroyed()) {
                 if (g_currentLevel < MAX_LEVELS) {
                     g_currentLevel++;
-                    LoadLevel(g_currentLevel);
+                    LoadFullLevel(g_currentLevel);
                     ball = { WIDTH/2, HEIGHT/2 };
                     ballSpeed = { 4, -4 };
                     SaveGame(); // 自动保存进度
@@ -303,7 +365,7 @@ int main() {
 
         // 游戏结束重置
         if (g_gameOver && IsKeyPressed(KEY_R)) {
-            LoadLevel(1);
+            LoadFullLevel(1);
             g_score = 0;
             g_lives = 3;
             ball = { WIDTH/2, HEIGHT/2 };
